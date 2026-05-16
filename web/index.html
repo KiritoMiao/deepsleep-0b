@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Deepsleep</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-zinc-950 text-zinc-100">
+  <main class="mx-auto flex min-h-screen max-w-5xl flex-col px-4 py-4 sm:px-6">
+    <header class="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-4">
+      <div>
+        <h1 class="text-xl font-semibold tracking-normal">Deepsleep</h1>
+        <p class="text-sm text-zinc-400">OpenAI endpoint <code class="text-zinc-200">https://DOMAIN/v1/chat/completions</code></p>
+        <p class="text-sm text-zinc-400">Claude endpoint <code class="text-zinc-200">https://DOMAIN/v1/messages</code></p>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <select id="model" class="h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm outline-none focus:border-emerald-400">
+          <option value="deepsleep-0b">deepsleep-0b</option>
+          <option value="deepsleep">deepsleep</option>
+        </select>
+        <select id="thinkLevel" class="h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm outline-none focus:border-emerald-400">
+          <option value="medium">medium</option>
+          <option value="none">none</option>
+          <option value="low">low</option>
+          <option value="high">high</option>
+          <option value="max">max</option>
+        </select>
+      </div>
+    </header>
+
+    <section id="messages" class="flex-1 space-y-3 overflow-y-auto py-4" aria-live="polite"></section>
+
+    <div id="tokenStats" class="grid grid-cols-3 gap-2 border-t border-zinc-800 py-3 text-xs text-zinc-400">
+      <div><span class="block text-zinc-500">Prompt tokens</span><strong id="promptTokens" class="font-medium text-zinc-100">0</strong></div>
+      <div><span class="block text-zinc-500">Completion tokens</span><strong id="completionTokens" class="font-medium text-zinc-100">0</strong></div>
+      <div><span class="block text-zinc-500">Total tokens</span><strong id="totalTokens" class="font-medium text-zinc-100">0</strong></div>
+    </div>
+
+    <form id="composer" class="border-t border-zinc-800 pt-4">
+      <div class="flex gap-2">
+        <textarea id="prompt" rows="2" class="min-h-14 flex-1 resize-none rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm leading-6 outline-none focus:border-emerald-400" placeholder="Message deepsleep"></textarea>
+        <button class="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-md bg-emerald-500 text-zinc-950 hover:bg-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-300" type="submit" title="Send" aria-label="Send">
+          <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+        </button>
+      </div>
+    </form>
+  </main>
+
+  <script>
+    const messagesEl = document.querySelector('#messages');
+    const form = document.querySelector('#composer');
+    const promptEl = document.querySelector('#prompt');
+    const modelEl = document.querySelector('#model');
+    const thinkEl = document.querySelector('#thinkLevel');
+    const promptTokensEl = document.querySelector('#promptTokens');
+    const completionTokensEl = document.querySelector('#completionTokens');
+    const totalTokensEl = document.querySelector('#totalTokens');
+    const history = [];
+
+    function addBubble(role, text = '') {
+      const wrap = document.createElement('div');
+      wrap.className = role === 'user' ? 'flex justify-end' : 'flex justify-start';
+      const bubble = document.createElement('div');
+      bubble.className = role === 'user'
+        ? 'max-w-[82%] whitespace-pre-wrap rounded-md bg-emerald-500 px-3 py-2 text-sm leading-6 text-zinc-950'
+        : 'max-w-[82%] whitespace-pre-wrap rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm leading-6 text-zinc-100';
+      bubble.textContent = text;
+      wrap.appendChild(bubble);
+      messagesEl.appendChild(wrap);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      return bubble;
+    }
+
+    function updateTokenStats(usage) {
+      promptTokensEl.textContent = usage.prompt_tokens ?? 0;
+      completionTokensEl.textContent = usage.completion_tokens ?? 0;
+      totalTokensEl.textContent = usage.total_tokens ?? 0;
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const text = promptEl.value.trim();
+      if (!text) return;
+      promptEl.value = '';
+      history.push({role: 'user', content: text});
+      addBubble('user', text);
+      const assistant = addBubble('assistant', '');
+
+      try {
+        const response = await fetch('/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'authorization': 'Bearer sk-local',
+            'x-think-level': thinkEl.value
+          },
+          body: JSON.stringify({
+            model: modelEl.value,
+            stream: false,
+            messages: history
+          })
+        });
+        if (!response.ok) throw new Error(await response.text());
+        const payload = await response.json();
+        const message = payload.choices?.[0]?.message?.content || '';
+        assistant.textContent = message;
+        updateTokenStats(payload.usage || {});
+        history.push({role: 'assistant', content: assistant.textContent});
+      } catch (error) {
+        assistant.textContent = 'Request failed: ' + error.message;
+      }
+    });
+  </script>
+</body>
+</html>

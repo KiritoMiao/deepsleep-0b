@@ -1,0 +1,15 @@
+services:
+  deepsleep:
+    build:
+      context: .
+    image: deepsleep-0b:local
+    container_name: deepsleep-0b
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./data/slop.json:/app/data/slop.json:ro
+      - ./web/index.html:/app/web/index.html:ro
+    restart: unless-stopped
