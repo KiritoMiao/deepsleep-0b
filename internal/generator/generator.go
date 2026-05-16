@@ -36,6 +36,7 @@ type Request struct {
 	ThinkLevel   string
 	Tools        []Tool
 	UseInputSeed bool
+	RandomSeed   int64
 }
 
 type Result struct {
@@ -95,15 +96,15 @@ func (g *Generator) Generate(req Request) Result {
 	rng := g.requestRNG(req)
 	inputTokens := WeightedInputTokens(req.Input, req.History)
 	tools := bashTools(req.Tools)
-	if len(tools) > 0 && randomFloat(rng) < 0.10 {
-		sleepSeconds := 0.1 + randomFloat(rng)*9.9
+	if len(tools) > 0 && randomFloat(g.rng) < 0.10 {
+		sleepSeconds := 0.1 + randomFloat(g.rng)*9.9
 		sleepSeconds = math.Floor(sleepSeconds*10) / 10
 		return Result{
 			InputTokens: inputTokens,
 			Language:    lang,
 			ToolCall: &ToolCall{
-				ID:           fmt.Sprintf("call_%06d", randomIntn(rng, 1000000)),
-				Name:         tools[randomIntn(rng, len(tools))].Name,
+				ID:           fmt.Sprintf("call_%06d", randomIntn(g.rng, 1000000)),
+				Name:         tools[randomIntn(g.rng, len(tools))].Name,
 				Command:      fmt.Sprintf("sleep %.1f", sleepSeconds),
 				SleepSeconds: sleepSeconds,
 			},
@@ -134,14 +135,16 @@ func (g *Generator) requestRNG(req Request) Random {
 	if !req.UseInputSeed {
 		return g.rng
 	}
-	return rand.New(rand.NewSource(conversationSeed(req.Input, req.History)))
+	return rand.New(rand.NewSource(conversationSeed(req.Input, req.History, req.RandomSeed)))
 }
 
-func conversationSeed(input string, history string) int64 {
+func conversationSeed(input string, history string, randomSeed int64) int64 {
 	hash := fnv.New64a()
 	_, _ = hash.Write([]byte(input))
 	_, _ = hash.Write([]byte{0})
 	_, _ = hash.Write([]byte(history))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write([]byte(fmt.Sprintf("%d", randomSeed)))
 	return int64(hash.Sum64())
 }
 

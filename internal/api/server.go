@@ -151,6 +151,7 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 		ThinkLevel:   selectThinkLevel(r, req.ThinkLevel, req.ReasoningEffort, req.Thinking),
 		Tools:        openAITools(req.Tools),
 		UseInputSeed: true,
+		RandomSeed:   time.Now().UnixNano(),
 	})
 	if req.Stream {
 		s.streamOpenAIChat(w, req.Model, result)
@@ -175,6 +176,7 @@ func (s *Server) handleOpenAICompletion(w http.ResponseWriter, r *http.Request) 
 		MaxTokens:    req.MaxTokens,
 		ThinkLevel:   selectThinkLevel(r, req.ThinkLevel, req.ReasoningEffort, req.Thinking),
 		UseInputSeed: true,
+		RandomSeed:   time.Now().UnixNano(),
 	})
 	if req.Stream {
 		s.streamOpenAICompletion(w, req.Model, result)
@@ -365,6 +367,7 @@ func (s *Server) handleClaudeMessages(w http.ResponseWriter, r *http.Request) {
 		ThinkLevel:   selectThinkLevel(r, req.ThinkLevel, "", req.Thinking),
 		Tools:        claudeTools(req.Tools),
 		UseInputSeed: true,
+		RandomSeed:   time.Now().UnixNano(),
 	})
 	if req.Stream {
 		s.streamClaude(w, req.Model, result)

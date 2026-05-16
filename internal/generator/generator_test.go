@@ -138,13 +138,14 @@ func TestHistoryContributesHalfWeightedInputTokens(t *testing.T) {
 	}
 }
 
-func TestInputSeedMakesGenerationDeterministicPerConversation(t *testing.T) {
+func TestInputSeedCombinesConversationAndRandomSeed(t *testing.T) {
 	t.Parallel()
 
 	req := generator.Request{
 		Input:        "alpha beta gamma delta epsilon",
 		History:      "previous answer context",
 		UseInputSeed: true,
+		RandomSeed:   42,
 		MaxTokens:    30,
 	}
 	first := generator.New(testPhrases(), &fixedRNG{ints: []int{3, 2, 1}}).Generate(req)
@@ -152,6 +153,12 @@ func TestInputSeedMakesGenerationDeterministicPerConversation(t *testing.T) {
 
 	if first.Text != second.Text {
 		t.Fatalf("expected same input/history seed to produce same text, first=%q second=%q", first.Text, second.Text)
+	}
+
+	req.RandomSeed = 43
+	third := generator.New(testPhrases(), &fixedRNG{ints: []int{3, 2, 1}}).Generate(req)
+	if third.Text == first.Text {
+		t.Fatalf("expected different random generation seed to change text, first=%q third=%q", first.Text, third.Text)
 	}
 }
 

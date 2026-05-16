@@ -31,10 +31,11 @@
 
     <section id="messages" class="flex-1 space-y-3 overflow-y-auto py-4" aria-live="polite"></section>
 
-    <div id="tokenStats" class="grid grid-cols-3 gap-2 border-t border-zinc-800 py-3 text-xs text-zinc-400">
+    <div id="tokenStats" class="grid grid-cols-4 gap-2 border-t border-zinc-800 py-3 text-xs text-zinc-400">
       <div><span class="block text-zinc-500">Prompt tokens</span><strong id="promptTokens" class="font-medium text-zinc-100">0</strong></div>
       <div><span class="block text-zinc-500">Completion tokens</span><strong id="completionTokens" class="font-medium text-zinc-100">0</strong></div>
       <div><span class="block text-zinc-500">Total tokens</span><strong id="totalTokens" class="font-medium text-zinc-100">0</strong></div>
+      <div><span class="block text-zinc-500">TPS</span><strong id="tokensPerSecond" class="font-medium text-zinc-100">0.0</strong></div>
     </div>
 
     <form id="composer" class="border-t border-zinc-800 pt-4">
@@ -56,6 +57,7 @@
     const promptTokensEl = document.querySelector('#promptTokens');
     const completionTokensEl = document.querySelector('#completionTokens');
     const totalTokensEl = document.querySelector('#totalTokens');
+    const tokensPerSecondEl = document.querySelector('#tokensPerSecond');
     const history = [];
 
     function addBubble(role, text = '') {
@@ -72,10 +74,13 @@
       return bubble;
     }
 
-    function updateTokenStats(usage) {
+    function updateTokenStats(usage, elapsedSeconds) {
       promptTokensEl.textContent = usage.prompt_tokens ?? 0;
       completionTokensEl.textContent = usage.completion_tokens ?? 0;
       totalTokensEl.textContent = usage.total_tokens ?? 0;
+      const completionTokens = usage.completion_tokens ?? 0;
+      const tokensPerSecond = elapsedSeconds > 0 ? completionTokens / elapsedSeconds : 0;
+      tokensPerSecondEl.textContent = tokensPerSecond.toFixed(1);
     }
 
     form.addEventListener('submit', async (event) => {
@@ -88,6 +93,7 @@
       const assistant = addBubble('assistant', '');
 
       try {
+        const startedAt = performance.now();
         const response = await fetch('/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -103,9 +109,10 @@
         });
         if (!response.ok) throw new Error(await response.text());
         const payload = await response.json();
+        const elapsedSeconds = Math.max((performance.now() - startedAt) / 1000, 0.001);
         const message = payload.choices?.[0]?.message?.content || '';
         assistant.textContent = message;
-        updateTokenStats(payload.usage || {});
+        updateTokenStats(payload.usage || {}, elapsedSeconds);
         history.push({role: 'assistant', content: assistant.textContent});
       } catch (error) {
         assistant.textContent = 'Request failed: ' + error.message;
