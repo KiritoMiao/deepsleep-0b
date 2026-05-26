@@ -17,6 +17,7 @@
       <div class="flex flex-wrap items-center gap-2">
         <select id="model" class="h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm outline-none focus:border-emerald-400">
           <option value="deepsleep-0b">deepsleep-0b</option>
+          <option value="deepsleep-think">deepsleep-think</option>
           <option value="deepsleep">deepsleep</option>
         </select>
         <select id="thinkLevel" class="h-9 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm outline-none focus:border-emerald-400">
@@ -83,6 +84,75 @@
       tokensPerSecondEl.textContent = tokensPerSecond.toFixed(1);
     }
 
+    function tokenCount(text) {
+      let count = 0;
+      let inWord = false;
+      for (const char of text) {
+        if (/[\u3400-\u9fff]/u.test(char)) {
+          inWord = false;
+          count += 1;
+        } else if (/[A-Za-z0-9_]/.test(char)) {
+          if (!inWord) count += 1;
+          inWord = true;
+        } else {
+          inWord = false;
+        }
+      }
+      return count;
+    }
+
+    function streamUsage(prompt, completion) {
+      const promptTokens = tokenCount(prompt);
+      const completionTokens = tokenCount(completion);
+      return {
+        prompt_tokens: promptTokens,
+        completion_tokens: completionTokens,
+        total_tokens: promptTokens + completionTokens
+      };
+    }
+
+    function appendStreamEvent(buffer, onContent) {
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary !== -1) {
+        const event = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        for (const line of event.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          const data = line.slice(5).trim();
+          if (!data || data === '[DONE]') continue;
+          const payload = JSON.parse(data);
+          const content = payload.choices?.[0]?.delta?.content || payload.choices?.[0]?.text || '';
+          if (content) onContent(content);
+        }
+        boundary = buffer.indexOf('\n\n');
+      }
+      return buffer;
+    }
+
+    async function readStream(response, assistant) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let text = '';
+      const onContent = (content) => {
+        text += content;
+        assistant.textContent = text;
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      };
+      while (true) {
+        const {value, done} = await reader.read();
+        if (value) {
+          buffer += decoder.decode(value, {stream: !done});
+          buffer = appendStreamEvent(buffer, onContent);
+        }
+        if (done) {
+          buffer += decoder.decode();
+          appendStreamEvent(buffer, onContent);
+          return text;
+        }
+      }
+    }
+
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const text = promptEl.value.trim();
@@ -94,6 +164,7 @@
 
       try {
         const startedAt = performance.now();
+        const useStream = modelEl.value === 'deepsleep-think';
         const response = await fetch('/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -103,16 +174,23 @@
           },
           body: JSON.stringify({
             model: modelEl.value,
-            stream: false,
+            stream: useStream,
             messages: history
           })
         });
         if (!response.ok) throw new Error(await response.text());
-        const payload = await response.json();
+        let usage = {};
+        if (useStream) {
+          const message = await readStream(response, assistant);
+          usage = streamUsage(text, message);
+        } else {
+          const payload = await response.json();
+          const message = payload.choices?.[0]?.message?.content || '';
+          assistant.textContent = message;
+          usage = payload.usage || {};
+        }
         const elapsedSeconds = Math.max((performance.now() - startedAt) / 1000, 0.001);
-        const message = payload.choices?.[0]?.message?.content || '';
-        assistant.textContent = message;
-        updateTokenStats(payload.usage || {}, elapsedSeconds);
+        updateTokenStats(usage, elapsedSeconds);
         history.push({role: 'assistant', content: assistant.textContent});
       } catch (error) {
         assistant.textContent = 'Request failed: ' + error.message;

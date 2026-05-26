@@ -1,6 +1,6 @@
 # Deepsleep-0B
 
-Deepsleep-0B is a small Go server that exposes OpenAI-compatible and Claude-compatible chat endpoints for the `deepsleep` and `deepsleep-0b` models.
+Deepsleep-0B is a small Go server that exposes OpenAI-compatible and Claude-compatible chat endpoints for the `deepsleep`, `deepsleep-0b`, and `deepsleep-think` models.
 
 Try the hosted model here:
 
@@ -13,6 +13,8 @@ https://deepsleep.isclaude.com
 - Models: `https://deepsleep.isclaude.com/v1/models`
 
 Any model name and API token are accepted.
+
+Use `deepsleep-think` with `stream: true` to get a delayed fake thinking stream followed by a short sleepy answer such as `sleeping...` or `dozing...`.
 
 ## Run Locally
 

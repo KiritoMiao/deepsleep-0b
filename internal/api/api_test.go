@@ -46,6 +46,15 @@ func newTestServer(rng generator.Random) http.Handler {
 	})
 }
 
+func containsAny(text string, values []string) bool {
+	for _, value := range values {
+		if strings.Contains(text, value) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestModelsListsOnlyAdvertisedModels(t *testing.T) {
 	t.Parallel()
 
@@ -65,7 +74,7 @@ func TestModelsListsOnlyAdvertisedModels(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Object != "list" || len(body.Data) != 2 || body.Data[0].ID != "deepsleep" || body.Data[1].ID != "deepsleep-0b" {
+	if body.Object != "list" || len(body.Data) != 3 || body.Data[0].ID != "deepsleep" || body.Data[1].ID != "deepsleep-0b" || body.Data[2].ID != "deepsleep-think" {
 		t.Fatalf("unexpected models response: %#v", body)
 	}
 }
@@ -189,6 +198,27 @@ func TestOpenAIChatStreamsSSE(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "data: ") || !strings.Contains(rec.Body.String(), "data: [DONE]") {
 		t.Fatalf("expected SSE data and done marker, got %s", rec.Body.String())
+	}
+}
+
+func TestOpenAIChatThinkModelStreamsFakeThinkingThenSleepyText(t *testing.T) {
+	payload := `{"model":"deepsleep-think","stream":true,"messages":[{"role":"user","content":"hello there"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(payload))
+	rec := httptest.NewRecorder()
+	newTestServer(&fixedRNG{}).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"model":"deepsleep-think"`) || !strings.Contains(body, `"content":"thinking"`) {
+		t.Fatalf("expected streamed thinking chunks for deepsleep-think, got %s", body)
+	}
+	if !containsAny(body, []string{"sleeping...", "dozing...", "dreaming...", "napping...", "snoozing..."}) {
+		t.Fatalf("expected sleepy final text after fake thinking, got %s", body)
+	}
+	if !strings.Contains(body, "data: [DONE]") {
+		t.Fatalf("expected done marker, got %s", body)
 	}
 }
 
@@ -343,6 +373,8 @@ func TestFrontendDisplaysTokenCounts(t *testing.T) {
 		"https://DOMAIN/v1/chat/completions",
 		"Claude endpoint",
 		"https://DOMAIN/v1/messages",
+		"deepsleep-think",
+		"readStream(response, assistant)",
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("frontend should include %q in token count UI", want)

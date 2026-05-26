@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,6 +9,14 @@ import (
 	"time"
 
 	"deepsleep.local/deepsleep0b/internal/generator"
+)
+
+const thinkingModelID = "deepsleep-think"
+
+var (
+	thinkingPreludeChunks = []string{"thinking", ".", ".", ".\n\n"}
+	sleepyFinalWords      = []string{"sleeping...", "dozing...", "dreaming...", "napping...", "snoozing..."}
+	thinkingChunkDelay    = 200 * time.Millisecond
 )
 
 type Config struct {
@@ -94,6 +103,7 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		"data": []map[string]any{
 			{"id": "deepsleep", "object": "model", "created": 1778935891, "owned_by": "deepsleep"},
 			{"id": "deepsleep-0b", "object": "model", "created": 1778935891, "owned_by": "deepsleep"},
+			{"id": thinkingModelID, "object": "model", "created": 1778935891, "owned_by": "deepsleep"},
 		},
 	})
 }
@@ -154,7 +164,7 @@ func (s *Server) handleOpenAIChat(w http.ResponseWriter, r *http.Request) {
 		RandomSeed:   time.Now().UnixNano(),
 	})
 	if req.Stream {
-		s.streamOpenAIChat(w, req.Model, result)
+		s.streamOpenAIChat(r.Context(), w, req.Model, result)
 		return
 	}
 	writeJSON(w, http.StatusOK, openAIChatResponse(req.Model, result))
@@ -179,7 +189,7 @@ func (s *Server) handleOpenAICompletion(w http.ResponseWriter, r *http.Request) 
 		RandomSeed:   time.Now().UnixNano(),
 	})
 	if req.Stream {
-		s.streamOpenAICompletion(w, req.Model, result)
+		s.streamOpenAICompletion(r.Context(), w, req.Model, result)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -239,7 +249,7 @@ func openAIUsage(result generator.Result) map[string]int {
 	}
 }
 
-func (s *Server) streamOpenAIChat(w http.ResponseWriter, model string, result generator.Result) {
+func (s *Server) streamOpenAIChat(ctx context.Context, w http.ResponseWriter, model string, result generator.Result) {
 	startStream(w)
 	id := newID("chatcmpl")
 	writeSSE(w, map[string]any{
@@ -268,38 +278,82 @@ func (s *Server) streamOpenAIChat(w http.ResponseWriter, model string, result ge
 		writeOpenAIFinish(w, id, model, "tool_calls")
 		return
 	}
+	if isThinkingModel(model) {
+		writeOpenAIChatThinking(ctx, w, id, model)
+		writeOpenAIFinish(w, id, model, "stop")
+		return
+	}
 	for _, chunk := range textChunks(result.Text) {
-		writeSSE(w, map[string]any{
-			"id":      id,
-			"object":  "chat.completion.chunk",
-			"created": time.Now().Unix(),
-			"model":   model,
-			"choices": []map[string]any{{
-				"index":         0,
-				"delta":         map[string]string{"content": chunk},
-				"finish_reason": nil,
-			}},
-		})
+		writeOpenAIChatContent(w, id, model, chunk)
 	}
 	writeOpenAIFinish(w, id, model, "stop")
 }
 
-func (s *Server) streamOpenAICompletion(w http.ResponseWriter, model string, result generator.Result) {
+func (s *Server) streamOpenAICompletion(ctx context.Context, w http.ResponseWriter, model string, result generator.Result) {
 	startStream(w)
 	id := newID("cmpl")
-	for _, chunk := range textChunks(result.Text) {
-		writeSSE(w, map[string]any{
-			"id":      id,
-			"object":  "text_completion",
-			"created": time.Now().Unix(),
-			"model":   model,
-			"choices": []map[string]any{{
-				"text":          chunk,
-				"index":         0,
-				"finish_reason": nil,
-			}},
-		})
+	if isThinkingModel(model) {
+		writeOpenAICompletionThinking(ctx, w, id, model)
+		writeOpenAICompletionFinish(w, id, model)
+		return
 	}
+	for _, chunk := range textChunks(result.Text) {
+		writeOpenAICompletionText(w, id, model, chunk)
+	}
+	writeOpenAICompletionFinish(w, id, model)
+}
+
+func writeOpenAIChatThinking(ctx context.Context, w http.ResponseWriter, id string, model string) {
+	final := sleepyFinalWord()
+	for _, chunk := range thinkingPreludeChunks {
+		writeOpenAIChatContent(w, id, model, chunk)
+		if !waitThinkingChunk(ctx) {
+			return
+		}
+	}
+	writeOpenAIChatContent(w, id, model, final)
+}
+
+func writeOpenAICompletionThinking(ctx context.Context, w http.ResponseWriter, id string, model string) {
+	final := sleepyFinalWord()
+	for _, chunk := range thinkingPreludeChunks {
+		writeOpenAICompletionText(w, id, model, chunk)
+		if !waitThinkingChunk(ctx) {
+			return
+		}
+	}
+	writeOpenAICompletionText(w, id, model, final)
+}
+
+func writeOpenAIChatContent(w http.ResponseWriter, id string, model string, content string) {
+	writeSSE(w, map[string]any{
+		"id":      id,
+		"object":  "chat.completion.chunk",
+		"created": time.Now().Unix(),
+		"model":   model,
+		"choices": []map[string]any{{
+			"index":         0,
+			"delta":         map[string]string{"content": content},
+			"finish_reason": nil,
+		}},
+	})
+}
+
+func writeOpenAICompletionText(w http.ResponseWriter, id string, model string, text string) {
+	writeSSE(w, map[string]any{
+		"id":      id,
+		"object":  "text_completion",
+		"created": time.Now().Unix(),
+		"model":   model,
+		"choices": []map[string]any{{
+			"text":          text,
+			"index":         0,
+			"finish_reason": nil,
+		}},
+	})
+}
+
+func writeOpenAICompletionFinish(w http.ResponseWriter, id string, model string) {
 	writeSSE(w, map[string]any{
 		"id":      id,
 		"object":  "text_completion",
@@ -312,6 +366,27 @@ func (s *Server) streamOpenAICompletion(w http.ResponseWriter, model string, res
 		}},
 	})
 	_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	flush(w)
+}
+
+func isThinkingModel(model string) bool {
+	return strings.EqualFold(strings.TrimSpace(model), thinkingModelID)
+}
+
+func waitThinkingChunk(ctx context.Context) bool {
+	timer := time.NewTimer(thinkingChunkDelay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func sleepyFinalWord() string {
+	index := time.Now().UnixNano() % int64(len(sleepyFinalWords))
+	return sleepyFinalWords[index]
 }
 
 func writeOpenAIFinish(w http.ResponseWriter, id string, model string, reason string) {
@@ -327,6 +402,7 @@ func writeOpenAIFinish(w http.ResponseWriter, id string, model string, reason st
 		}},
 	})
 	_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	flush(w)
 }
 
 type claudeRequest struct {
@@ -370,7 +446,7 @@ func (s *Server) handleClaudeMessages(w http.ResponseWriter, r *http.Request) {
 		RandomSeed:   time.Now().UnixNano(),
 	})
 	if req.Stream {
-		s.streamClaude(w, req.Model, result)
+		s.streamClaude(r.Context(), w, req.Model, result)
 		return
 	}
 	content := []map[string]any{{"type": "text", "text": result.Text}}
@@ -399,7 +475,7 @@ func (s *Server) handleClaudeMessages(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) streamClaude(w http.ResponseWriter, model string, result generator.Result) {
+func (s *Server) streamClaude(ctx context.Context, w http.ResponseWriter, model string, result generator.Result) {
 	startStream(w)
 	id := newID("msg")
 	writeNamedSSE(w, "message_start", map[string]any{
@@ -441,6 +517,17 @@ func (s *Server) streamClaude(w http.ResponseWriter, model string, result genera
 		"index":         0,
 		"content_block": map[string]string{"type": "text", "text": ""},
 	})
+	if isThinkingModel(model) {
+		outputTokens := writeClaudeThinking(ctx, w)
+		writeNamedSSE(w, "content_block_stop", map[string]any{"type": "content_block_stop", "index": 0})
+		writeNamedSSE(w, "message_delta", map[string]any{
+			"type":  "message_delta",
+			"delta": map[string]string{"stop_reason": "end_turn"},
+			"usage": map[string]int{"output_tokens": outputTokens},
+		})
+		writeNamedSSE(w, "message_stop", map[string]string{"type": "message_stop"})
+		return
+	}
 	for _, chunk := range textChunks(result.Text) {
 		writeNamedSSE(w, "content_block_delta", map[string]any{
 			"type":  "content_block_delta",
@@ -455,6 +542,27 @@ func (s *Server) streamClaude(w http.ResponseWriter, model string, result genera
 		"usage": map[string]int{"output_tokens": result.OutputTokens},
 	})
 	writeNamedSSE(w, "message_stop", map[string]string{"type": "message_stop"})
+}
+
+func writeClaudeThinking(ctx context.Context, w http.ResponseWriter) int {
+	final := sleepyFinalWord()
+	output := strings.Join(thinkingPreludeChunks, "") + final
+	for _, chunk := range thinkingPreludeChunks {
+		writeClaudeTextDelta(w, chunk)
+		if !waitThinkingChunk(ctx) {
+			return generator.CountWords(output)
+		}
+	}
+	writeClaudeTextDelta(w, final)
+	return generator.CountWords(output)
+}
+
+func writeClaudeTextDelta(w http.ResponseWriter, text string) {
+	writeNamedSSE(w, "content_block_delta", map[string]any{
+		"type":  "content_block_delta",
+		"index": 0,
+		"delta": map[string]string{"type": "text_delta", "text": text},
+	})
 }
 
 type conversationText struct {
